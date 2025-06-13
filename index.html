@@ -53,7 +53,7 @@
             padding: 20px;
             background-color: #f5f5f7;
             border-radius: 5px;
-            white-space: pre;  /* no auto-wrap */
+            white-space: pre-wrap;  /* Changed from pre to pre-wrap for better display */
             overflow-x: auto;
             max-height: 400px;
             overflow-y: auto;
@@ -116,13 +116,27 @@ const chapterList = document.getElementById('chapterList');
 const chaptersDiv = document.getElementById('chapters');
 
 /* ————— File selection ————— */
-fileInput.addEventListener('change', e => e.target.files[0] && handleFile(e.target.files[0]));
+fileInput.addEventListener('change', e => {
+    if (e.target.files && e.target.files[0]) {
+        handleFile(e.target.files[0]);
+    }
+});
 
-uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
-uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+uploadArea.addEventListener('dragover', e => { 
+    e.preventDefault(); 
+    uploadArea.classList.add('dragover'); 
+});
+
+uploadArea.addEventListener('dragleave', () => {
+    uploadArea.classList.remove('dragover');
+});
+
 uploadArea.addEventListener('drop', e => {
-    e.preventDefault(); uploadArea.classList.remove('dragover');
-    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    e.preventDefault(); 
+    uploadArea.classList.remove('dragover');
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        handleFile(e.dataTransfer.files[0]);
+    }
 });
 
 /* ————— Helpers ————— */
@@ -134,7 +148,7 @@ const showStatus = (msg, type='processing') => {
 
 function handleFile(file){
     const lower = file.name.toLowerCase();
-    if(!(lower.endsWith('.epub') || lower.endsWith('.epub.zip'))){
+    if(!(lower.endsWith('.epub') || lower.endsWith('.epub.zip') || lower.endsWith('.zip'))){
         showStatus(`Please select a .epub or .epub.zip file (you chose: ${file.name})`, 'error');
         return;
     }
@@ -147,7 +161,7 @@ function handleFile(file){
             displayResult(convertedData);
             showStatus(`Conversion successful – ${convertedData.chapters.length} chapters`, 'success');
         }catch(err){
-            console.error(err);
+            console.error('Error parsing EPUB:', err);
             showStatus(`Error: ${err.message}`, 'error');
         }
     };
@@ -158,111 +172,201 @@ function handleFile(file){
 /* ————— EPUB Parsing ————— */
 async function parseEPUB(buffer, filename){
     let zip;
-    try{ zip = await JSZip.loadAsync(buffer); }
-    catch(e){ throw new Error('Not a valid ZIP/EPUB'); }
+    try{ 
+        zip = await JSZip.loadAsync(buffer); 
+    } catch(e){ 
+        throw new Error('Not a valid ZIP/EPUB file'); 
+    }
 
     // locate OPF via container.xml if present
-    let opfPath;
+    let opfPath = null;
     try{
-        const container = await zip.file('META-INF/container.xml').async('string');
-        opfPath = (container.match(/full-path="([^"]+\.opf)"/)||[])[1];
-    }catch{}
+        const containerFile = zip.file('META-INF/container.xml');
+        if (containerFile) {
+            const container = await containerFile.async('string');
+            const match = container.match(/full-path="([^"]+\.opf)"/);
+            if (match) {
+                opfPath = match[1];
+            }
+        }
+    }catch(e){
+        console.log('No container.xml found, will search for OPF file');
+    }
 
     // If OPF not found, look for nested .epub inside (double-zipped case)
     if(!opfPath){
-        const nested = Object.keys(zip.files).find(p=>p.toLowerCase().endsWith('.epub'));
+        const files = Object.keys(zip.files);
+        const nested = files.find(p => p.toLowerCase().endsWith('.epub'));
         if(nested){
             showStatus('Detected nested .epub – extracting…');
             const nestedBuffer = await zip.file(nested).async('arraybuffer');
             return parseEPUB(nestedBuffer, nested); // recurse once
         }
         // fallback: search for first .opf anywhere
-        opfPath = Object.keys(zip.files).find(p => p.toLowerCase().endsWith('.opf'));
+        opfPath = files.find(p => p.toLowerCase().endsWith('.opf'));
     }
-    if(!opfPath) throw new Error('content.opf not found – not a valid EPUB');
+    
+    if(!opfPath) {
+        throw new Error('content.opf not found – not a valid EPUB');
+    }
 
-    const opfContent = await zip.file(opfPath).async('string');
-    const opfDir     = opfPath.substring(0, opfPath.lastIndexOf('/')+1);
+    const opfFile = zip.file(opfPath);
+    if (!opfFile) {
+        throw new Error('OPF file not found in ZIP');
+    }
+    
+    const opfContent = await opfFile.async('string');
+    const opfDir = opfPath.substring(0, opfPath.lastIndexOf('/')+1);
 
     const meta = (pats, dflt='') => {
-        for(const p of pats){ const m = opfContent.match(p); if(m) return m[1].trim(); }
+        for(const p of pats){ 
+            const m = opfContent.match(p); 
+            if(m && m[1]) return m[1].trim(); 
+        }
         return dflt;
     };
+    
     const title  = meta([/<dc:title[^>]*>([^<]+)<\/dc:title>/i], filename.replace(/\.epub(\.zip)?$/i,''));
     const author = meta([/<dc:creator[^>]*>([^<]+)<\/dc:creator>/i], 'Unknown Author');
 
     // manifest id→href
     const manifest = {};
-    [...opfContent.matchAll(/<item[^>]+>/g)].forEach(it=>{
-        const id=(it[0].match(/id="([^"]+)"/)||[])[1];
-        const hr=(it[0].match(/href="([^"]+)"/)||[])[1];
-        if(id&&hr) manifest[id]=hr;
-    });
+    const manifestMatches = opfContent.matchAll(/<item[^>]+>/g);
+    for(const match of manifestMatches){
+        const itemStr = match[0];
+        const idMatch = itemStr.match(/id="([^"]+)"/);
+        const hrefMatch = itemStr.match(/href="([^"]+)"/);
+        if(idMatch && hrefMatch) {
+            manifest[idMatch[1]] = hrefMatch[1];
+        }
+    }
 
     // spine order
     const spineSect = (opfContent.match(/<spine[\s\S]*?<\/spine>/i)||[''])[0];
-    const order = [...spineSect.matchAll(/<itemref[^>]+idref="([^"]+)"/g)].map(m=>m[1]);
+    const spineMatches = spineSect.matchAll(/<itemref[^>]+idref="([^"]+)"/g);
+    const order = Array.from(spineMatches).map(m => m[1]);
 
-    const chapters=[];
+    const chapters = [];
     for(const id of order){
-        const href = manifest[id]; if(!href) continue;
+        const href = manifest[id]; 
+        if(!href) continue;
+        
+        const fullPath = opfDir + href;
+        const htmlFile = zip.file(fullPath);
+        if (!htmlFile) {
+            console.log(`Chapter file not found: ${fullPath}`);
+            continue;
+        }
+        
         try{
-            const html = await zip.file(opfDir+href).async('string');
-            const {title:ct,text}=extractTextFromHTML(html);
-            if(text.trim()) chapters.push({title: ct||`Chapter ${chapters.length+1}`, content:text});
-        }catch{}
+            const html = await htmlFile.async('string');
+            const {title: ct, text} = extractTextFromHTML(html);
+            if(text.trim()) {
+                chapters.push({
+                    title: ct || `Chapter ${chapters.length + 1}`, 
+                    content: text
+                });
+            }
+        }catch(e){
+            console.error(`Error reading chapter ${fullPath}:`, e);
+        }
     }
-    if(!chapters.length) throw new Error('Chapters not found / unreadable');
+    
+    if(!chapters.length) {
+        throw new Error('No chapters found or readable in EPUB');
+    }
+    
     return {title, author, chapters};
 }
 
 function extractTextFromHTML(html){
-    html = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi,'').replace(/<style[^>]*>[\s\S]*?<\/style>/gi,'');
+    // Remove scripts and styles
+    html = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi,'')
+               .replace(/<style[^>]*>[\s\S]*?<\/style>/gi,'');
+    
+    // Extract title
     const tMatch = html.match(/<title>([^<]+)<\/title>/i) || html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
-    const title = tMatch? tMatch[1].trim() : '';
-    const tmp = document.createElement('div'); tmp.innerHTML = html;
-    tmp.querySelectorAll('script,style,nav,header,footer').forEach(el=>el.remove());
-    tmp.querySelectorAll('br').forEach(br=>br.replaceWith('\n'));
-    tmp.querySelectorAll('p').forEach(p=>p.append('\n\n'));
-    let text = tmp.textContent||'';
-    text = text.replace(/\r\n/g,'\n').replace(/\n{3,}/g,'\n\n').replace(/\t/g,' ').replace(/ {2,}/g,' ').trim();
-    return {title,text};
+    const title = tMatch ? tMatch[1].trim() : '';
+    
+    // Create temporary element to parse HTML
+    const tmp = document.createElement('div'); 
+    tmp.innerHTML = html;
+    
+    // Remove unwanted elements
+    tmp.querySelectorAll('script,style,nav,header,footer').forEach(el => el.remove());
+    
+    // Handle line breaks and paragraphs
+    tmp.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+    tmp.querySelectorAll('p').forEach(p => {
+        p.insertAdjacentText('afterend', '\n\n');
+    });
+    
+    // Extract text
+    let text = tmp.textContent || '';
+    
+    // Clean up whitespace
+    text = text.replace(/\r\n/g,'\n')
+               .replace(/\n{3,}/g,'\n\n')
+               .replace(/\t/g,' ')
+               .replace(/ {2,}/g,' ')
+               .trim();
+    
+    return {title, text};
 }
 
 /* ————— Display ————— */
 function displayResult(data){
-    chaptersDiv.innerHTML='';
-    data.chapters.forEach((c,i)=>{
-        const d=document.createElement('div'); d.className='chapter-item'; d.textContent=`${i+1}. ${c.title}`; chaptersDiv.appendChild(d);
+    chaptersDiv.innerHTML = '';
+    data.chapters.forEach((c, i) => {
+        const d = document.createElement('div'); 
+        d.className = 'chapter-item'; 
+        d.textContent = `${i+1}. ${c.title}`; 
+        chaptersDiv.appendChild(d);
     });
-    chapterList.style.display='block';
-    output.textContent = JSON.stringify(data,null,2); output.style.display='block';
-    downloadBtn.style.display = copyBtn.style.display = resetBtn.style.display = 'inline-block';
+    chapterList.style.display = 'block';
+    output.textContent = JSON.stringify(data, null, 2); 
+    output.style.display = 'block';
+    downloadBtn.style.display = 'inline-block';
+    copyBtn.style.display = 'inline-block';
+    resetBtn.style.display = 'inline-block';
 }
 
 /* ————— Actions ————— */
-downloadBtn.addEventListener('click',()=>{
+downloadBtn.addEventListener('click', () => {
     if(!convertedData) return;
-    const blob = new Blob([JSON.stringify(convertedData,null,2)],{type:'application/json'});
+    const blob = new Blob([JSON.stringify(convertedData, null, 2)], {type: 'application/json'});
     const url = URL.createObjectURL(blob);
-    const a=document.createElement('a'); a.href=url;
-    a.download = `${bookTitle.replace(/[^a-z0-9]/gi,'-').toLowerCase()}.json`;
-    a.click(); URL.revokeObjectURL(url);
+    const a = document.createElement('a'); 
+    a.href = url;
+    a.download = `${bookTitle.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.json`;
+    document.body.appendChild(a);
+    a.click(); 
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 });
 
-copyBtn.addEventListener('click',()=>{
+copyBtn.addEventListener('click', async () => {
     if(!convertedData) return;
-    navigator.clipboard.writeText(JSON.stringify(convertedData,null,2)).then(()=>{
-        const old=copyBtn.textContent; copyBtn.textContent='✅ Copied!'; setTimeout(()=>copyBtn.textContent=old,2000);
-    });
+    try {
+        await navigator.clipboard.writeText(JSON.stringify(convertedData, null, 2));
+        const old = copyBtn.textContent; 
+        copyBtn.textContent = '✅ Copied!'; 
+        setTimeout(() => copyBtn.textContent = old, 2000);
+    } catch(err) {
+        console.error('Failed to copy:', err);
+        alert('Failed to copy to clipboard');
+    }
 });
 
-resetBtn.addEventListener('click',()=>{
-    fileInput.value=''; convertedData=null;
-    ['status','chapterList','output','downloadBtn','copyBtn','resetBtn'].forEach(id=>{
-        const el=document.getElementById(id);
-        if(el) el.style.display = (id==='status'? 'none':'none');
-    });
+resetBtn.addEventListener('click', () => {
+    fileInput.value = ''; 
+    convertedData = null;
+    status.style.display = 'none';
+    chapterList.style.display = 'none';
+    output.style.display = 'none';
+    downloadBtn.style.display = 'none';
+    copyBtn.style.display = 'none';
+    resetBtn.style.display = 'none';
 });
 </script>
 </body>
