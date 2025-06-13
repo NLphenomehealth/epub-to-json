@@ -136,7 +136,8 @@
             <p>📁 Drop your EPUB file here or click the button below</p>
             <div class="file-input-wrapper">
                 <div class="file-input-button">Choose EPUB File</div>
-                <input type="file" id="fileInput" accept=".epub,application/epub+zip">
+                <!-- Added .zip to accept list so macOS double-zipped files are selectable -->
+                <input type="file" id="fileInput" accept=".epub,.zip,application/epub+zip,application/zip">
             </div>
         </div>
         
@@ -196,7 +197,9 @@
         };
 
         function handleFile(file) {
-            const isEpub = file.name.toLowerCase().endsWith('.epub') || file.type === 'application/epub+zip';
+            const name = file.name.toLowerCase();
+            // Accept .epub, .epub.zip (common on macOS after double zips), or any zip with appropriate MIME
+            const isEpub = name.endsWith('.epub') || name.endsWith('.epub.zip') || file.type === 'application/epub+zip' || file.type === 'application/zip';
             if (!isEpub) {
                 showStatus(`Please select an EPUB file. You selected: ${file.name}`, 'error');
                 return;
@@ -207,7 +210,7 @@
             reader.onload = async (e) => {
                 try {
                     convertedData = await parseEPUB(e.target.result, file.name);
-                    bookTitle = convertedData.title || file.name.replace(/\.epub$/i, '');
+                    bookTitle = convertedData.title || file.name.replace(/\.epub(\.zip)?$/i, '');
                     displayResult(convertedData);
                     showStatus(`Conversion successful! Found ${convertedData.chapters.length} chapters.`, 'success');
                 } catch (err) {
@@ -244,7 +247,7 @@
                 }
                 return fallback;
             };
-            const title  = getMeta([/<dc:title[^>]*>([^<]+)<\/dc:title>/i], filename.replace(/\.epub$/i, ''));
+            const title  = getMeta([/<dc:title[^>]*>([^<]+)<\/dc:title>/i], filename.replace(/\.epub(\.zip)?$/i, ''));
             const author = getMeta([/<dc:creator[^>]*>([^<]+)<\/dc:creator>/i], 'Unknown Author');
 
             // manifest id → href
@@ -256,92 +259,4 @@
             });
 
             // spine order
-            const spine = (opfContent.match(/<spine[\s\S]*?<\/spine>/i) || [''])[0];
-            const order = [...spine.matchAll(/<itemref[^>]+idref="([^"]+)"/g)].map(m => m[1]);
-
-            const chapters = [];
-            for (const id of order) {
-                const href = manifest[id];
-                if (!href) continue;
-                try {
-                    const html = await zip.file(opfDir + href).async('string');
-                    const { title: chTitle, text } = extractTextFromHTML(html);
-                    if (text.trim()) chapters.push({ title: chTitle || `Chapter ${chapters.length + 1}`, content: text });
-                } catch {}
-            }
-            if (!chapters.length) throw new Error('No readable chapters found');
-            return { title, author, chapters };
-        }
-
-        /* ────────────────────────── Clean HTML → Text ────────────────────────── */
-        function extractTextFromHTML(html) {
-            html = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-                       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
-
-            let title = '';
-            const tMatch = html.match(/<title>([^<]+)<\/title>/i) || html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
-            if (tMatch) title = tMatch[1].trim();
-
-            const temp = document.createElement('div');
-            temp.innerHTML = html;
-            temp.querySelectorAll('script, style, nav, header, footer').forEach(el => el.remove());
-            temp.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
-            temp.querySelectorAll('p').forEach(p => p.appendChild(document.createTextNode('\n\n')));
-            let text = temp.textContent || '';
-            text = text.replace(/\r\n/g, '\n')
-                       .replace(/\n{3,}/g, '\n\n')
-                       .replace(/\t/g, ' ')
-                       .replace(/ {2,}/g, ' ')
-                       .trim();
-            return { title, text };
-        }
-
-        /* ────────────────────────── Display ────────────────────────── */
-        function displayResult(data) {
-            // chapter list
-            chaptersDiv.innerHTML = '';
-            data.chapters.forEach((ch, i) => {
-                const d = document.createElement('div');
-                d.className = 'chapter-item';
-                d.textContent = `${i + 1}. ${ch.title}`;
-                chaptersDiv.appendChild(d);
-            });
-            chapterList.style.display = 'block';
-
-            // JSON
-            output.textContent = JSON.stringify(data, null, 2);
-            output.style.display = 'block';
-
-            downloadBtn.style.display = copyBtn.style.display = resetBtn.style.display = 'inline-block';
-        }
-
-        /* ────────────────────────── Actions ────────────────────────── */
-        downloadBtn.addEventListener('click', () => {
-            if (!convertedData) return;
-            const blob = new Blob([JSON.stringify(convertedData, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${bookTitle.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
-        });
-
-        copyBtn.addEventListener('click', () => {
-            if (!convertedData) return;
-            navigator.clipboard.writeText(JSON.stringify(convertedData, null, 2)).then(() => {
-                const prev = copyBtn.textContent;
-                copyBtn.textContent = '✅ Copied!';
-                setTimeout(() => copyBtn.textContent = prev, 2000);
-            });
-        });
-
-        resetBtn.addEventListener('click', () => {
-            fileInput.value = '';
-            status.style.display = output.style.display = chapterList.style.display = 'none';
-            downloadBtn.style.display = copyBtn.style.display = resetBtn.style.display = 'none';
-            convertedData = null;
-        });
-    </script>
-</body>
-</html>
+            const spine = (opfContent.match(/<spine[\s\
