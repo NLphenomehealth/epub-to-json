@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EPUB to JSON Converter for WatchOS – Improved</title>
+    <title>EPUB to JSON Converter for WatchOS – Nested-ZIP Aware</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
         body {
@@ -32,13 +32,8 @@
             cursor: pointer;
             transition: background-color 0.3s;
         }
-        .upload-area:hover {
-            background-color: #f0f8ff;
-        }
-        .upload-area.dragover {
-            background-color: #e3f2fd;
-            border-color: #0051d5;
-        }
+        .upload-area:hover { background-color: #f0f8ff; }
+        .upload-area.dragover { background-color: #e3f2fd; border-color: #0051d5; }
         button {
             background-color: #007aff;
             color: white;
@@ -49,214 +44,226 @@
             font-size: 16px;
             margin: 10px 5px;
         }
-        button:hover {
-            background-color: #0051d5;
-        }
-        button:disabled {
-            background-color: #ccc;
-            cursor: not-allowed;
-        }
-        /* ────────────────────────────────── */
-        /* Output area – keep words intact   */
-        /* ────────────────────────────────── */
+        button:hover   { background-color: #0051d5; }
+        button:disabled{ background-color: #ccc; cursor: not-allowed; }
+
+        /* Output area – keep words intact */
         .output {
             margin-top: 20px;
             padding: 20px;
             background-color: #f5f5f7;
             border-radius: 5px;
-            white-space: pre;          /* preserve all spaces + line-breaks, no auto-wrap */
-            overflow-x: auto;          /* horizontal scroll for long lines                */
+            white-space: pre;  /* no auto-wrap */
+            overflow-x: auto;
             max-height: 400px;
             overflow-y: auto;
-            font-family: 'Courier New', monospace;
+            font-family: "Courier New", monospace;
             font-size: 14px;
         }
-        .status {
-            margin: 20px 0;
-            padding: 10px;
-            border-radius: 5px;
-            text-align: center;
-        }
-        .status.success {
-            background-color: #d4edda;
-            color: #155724;
-        }
-        .status.error {
-            background-color: #f8d7da;
-            color: #721c24;
-        }
-        .status.processing {
-            background-color: #d1ecf1;
-            color: #0c5460;
-        }
-        .chapter-list {
-            margin: 20px 0;
-            max-height: 200px;
-            overflow-y: auto;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            padding: 10px;
-        }
-        .chapter-item {
-            padding: 5px;
-            margin: 2px 0;
-            background-color: #f0f0f0;
-            border-radius: 3px;
-        }
-        .file-input-wrapper {
-            position: relative;
-            overflow: hidden;
-            display: inline-block;
-        }
-        .file-input-wrapper input[type=file] {
-            position: absolute;
-            left: 0;
-            top: 0;
-            opacity: 0;
-            cursor: pointer;
-            width: 100%;
-            height: 100%;
-        }
-        .file-input-button {
-            display: inline-block;
-            padding: 10px 20px;
-            background-color: #007aff;
-            color: white;
-            border-radius: 5px;
-            cursor: pointer;
-        }
+        .status            { margin: 20px 0; padding: 10px; border-radius: 5px; text-align: center; }
+        .status.success    { background: #d4edda; color: #155724; }
+        .status.error      { background: #f8d7da; color: #721c24; }
+        .status.processing { background: #d1ecf1; color: #0c5460; }
+        .chapter-list      { margin: 20px 0; max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px; padding: 10px; }
+        .chapter-item      { padding: 5px; margin: 2px 0; background: #f0f0f0; border-radius: 3px; }
+        .file-input-wrapper{ position: relative; overflow: hidden; display: inline-block; }
+        .file-input-wrapper input[type=file]{ position: absolute; left: 0; top: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+        .file-input-button { display: inline-block; padding: 10px 20px; background: #007aff; color: #fff; border-radius: 5px; cursor: pointer; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>📚 EPUB to JSON Converter</h1>
-        <p style="text-align: center; color: #666;">Convert your EPUB files to JSON format for your WatchOS reader app</p>
-        
-        <div class="upload-area" id="uploadArea">
-            <p>📁 Drop your EPUB file here or click the button below</p>
-            <div class="file-input-wrapper">
-                <div class="file-input-button">Choose EPUB File</div>
-                <!-- Added .zip to accept list so macOS double-zipped files are selectable -->
-                <input type="file" id="fileInput" accept=".epub,.zip,application/epub+zip,application/zip">
-            </div>
+<div class="container">
+    <h1>📚 EPUB to JSON Converter</h1>
+    <p style="text-align:center;color:#666;">Convert plain <code>.epub</code> or double-zipped <code>.epub.zip</code> files</p>
+
+    <div class="upload-area" id="uploadArea">
+        <p>📁 Drop your file here or click below</p>
+        <div class="file-input-wrapper">
+            <div class="file-input-button">Choose File</div>
+            <!-- .zip included so macOS Safari lets you pick an .epub.zip file -->
+            <input type="file" id="fileInput" accept=".epub,.zip,application/epub+zip,application/zip">
         </div>
-        
-        <div id="status" class="status" style="display: none;"></div>
-        
-        <div id="chapterList" class="chapter-list" style="display: none;">
-            <h3>Found Chapters:</h3>
-            <div id="chapters"></div>
-        </div>
-        
-        <div style="text-align: center; margin: 20px 0;">
-            <button id="downloadBtn" style="display: none;">💾 Download JSON</button>
-            <button id="copyBtn" style="display: none;">📋 Copy JSON</button>
-            <button id="resetBtn" style="display: none;">🔄 Convert Another</button>
-        </div>
-        
-        <!-- note: using <pre> keeps the JSON formatting visually intact -->
-        <pre id="output" class="output" style="display: none;"></pre>
     </div>
 
-    <script>
-        let convertedData = null;
-        let bookTitle = '';
+    <div id="status" class="status" style="display:none;"></div>
 
-        const uploadArea       = document.getElementById('uploadArea');
-        const fileInput        = document.getElementById('fileInput');
-        const status           = document.getElementById('status');
-        const output           = document.getElementById('output');
-        const downloadBtn      = document.getElementById('downloadBtn');
-        const copyBtn          = document.getElementById('copyBtn');
-        const resetBtn         = document.getElementById('resetBtn');
-        const chapterList      = document.getElementById('chapterList');
-        const chaptersDiv      = document.getElementById('chapters');
+    <div id="chapterList" class="chapter-list" style="display:none;">
+        <h3>Found Chapters</h3>
+        <div id="chapters"></div>
+    </div>
 
-        /* ───────────────────────── Drag & Drop / File Input ───────────────────────── */
-        fileInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) handleFile(file);
-        });
+    <div style="text-align:center;margin:20px 0;">
+        <button id="downloadBtn" style="display:none;">💾 Download JSON</button>
+        <button id="copyBtn"     style="display:none;">📋 Copy JSON</button>
+        <button id="resetBtn"    style="display:none;">🔄 Convert Another</button>
+    </div>
 
-        uploadArea.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            uploadArea.classList.add('dragover');
-        });
-        uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
-        uploadArea.addEventListener('drop', (e) => {
-            e.preventDefault();
-            uploadArea.classList.remove('dragover');
-            if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
-        });
+    <pre id="output" class="output" style="display:none;"></pre>
+</div>
 
-        /* ────────────────────────── Helpers ────────────────────────── */
-        const showStatus = (msg, type) => {
-            status.textContent = msg;
-            status.className = `status ${type}`;
-            status.style.display = 'block';
-        };
+<script>
+let convertedData = null;
+let bookTitle     = '';
 
-        function handleFile(file) {
-            const name = file.name.toLowerCase();
-            // Accept .epub, .epub.zip (common on macOS after double zips), or any zip with appropriate MIME
-            const isEpub = name.endsWith('.epub') || name.endsWith('.epub.zip') || file.type === 'application/epub+zip' || file.type === 'application/zip';
-            if (!isEpub) {
-                showStatus(`Please select an EPUB file. You selected: ${file.name}`, 'error');
-                return;
-            }
-            showStatus(`Processing: ${file.name}…`, 'processing');
+const uploadArea  = document.getElementById('uploadArea');
+const fileInput   = document.getElementById('fileInput');
+const status      = document.getElementById('status');
+const output      = document.getElementById('output');
+const downloadBtn = document.getElementById('downloadBtn');
+const copyBtn     = document.getElementById('copyBtn');
+const resetBtn    = document.getElementById('resetBtn');
+const chapterList = document.getElementById('chapterList');
+const chaptersDiv = document.getElementById('chapters');
 
-            const reader = new FileReader();
-            reader.onload = async (e) => {
-                try {
-                    convertedData = await parseEPUB(e.target.result, file.name);
-                    bookTitle = convertedData.title || file.name.replace(/\.epub(\.zip)?$/i, '');
-                    displayResult(convertedData);
-                    showStatus(`Conversion successful! Found ${convertedData.chapters.length} chapters.`, 'success');
-                } catch (err) {
-                    console.error(err);
-                    showStatus(`Error: ${err.message}`, 'error');
-                }
-            };
-            reader.onerror = () => showStatus('Error reading file', 'error');
-            reader.readAsArrayBuffer(file);
+/* ————— File selection ————— */
+fileInput.addEventListener('change', e => e.target.files[0] && handleFile(e.target.files[0]));
+
+uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+uploadArea.addEventListener('drop', e => {
+    e.preventDefault(); uploadArea.classList.remove('dragover');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+
+/* ————— Helpers ————— */
+const showStatus = (msg, type='processing') => {
+    status.textContent = msg;
+    status.className = `status ${type}`;
+    status.style.display = 'block';
+};
+
+function handleFile(file){
+    const lower = file.name.toLowerCase();
+    if(!(lower.endsWith('.epub') || lower.endsWith('.epub.zip'))){
+        showStatus(`Please select a .epub or .epub.zip file (you chose: ${file.name})`, 'error');
+        return;
+    }
+    showStatus(`Processing ${file.name}…`);
+    const reader = new FileReader();
+    reader.onload = async e => {
+        try{
+            convertedData = await parseEPUB(e.target.result, file.name);
+            bookTitle = convertedData.title || file.name.replace(/\.epub(\.zip)?$/i,'');
+            displayResult(convertedData);
+            showStatus(`Conversion successful – ${convertedData.chapters.length} chapters`, 'success');
+        }catch(err){
+            console.error(err);
+            showStatus(`Error: ${err.message}`, 'error');
         }
+    };
+    reader.onerror = () => showStatus('Error reading file', 'error');
+    reader.readAsArrayBuffer(file);
+}
 
-        /* ────────────────────────── EPUB Parsing ────────────────────────── */
-        async function parseEPUB(buffer, filename) {
-            const zip = await JSZip.loadAsync(buffer);
-            // Find path to OPF via container.xml
-            let opfPath;
-            try {
-                const container = await zip.file('META-INF/container.xml').async('string');
-                opfPath = (container.match(/full-path="([^"]+\.opf)"/) || [])[1];
-            } catch {}
-            if (!opfPath) {
-                // fallback: first .opf found
-                opfPath = Object.keys(zip.files).find(path => path.endsWith('.opf'));
-            }
-            if (!opfPath) throw new Error('content.opf not found');
+/* ————— EPUB Parsing ————— */
+async function parseEPUB(buffer, filename){
+    let zip;
+    try{ zip = await JSZip.loadAsync(buffer); }
+    catch(e){ throw new Error('Not a valid ZIP/EPUB'); }
 
-            const opfContent = await zip.file(opfPath).async('string');
-            const opfDir = opfPath.substring(0, opfPath.lastIndexOf('/') + 1);
+    // locate OPF via container.xml if present
+    let opfPath;
+    try{
+        const container = await zip.file('META-INF/container.xml').async('string');
+        opfPath = (container.match(/full-path="([^"]+\.opf)"/)||[])[1];
+    }catch{}
 
-            const getMeta = (patterns, fallback) => {
-                for (const p of patterns) {
-                    const m = opfContent.match(p);
-                    if (m) return m[1].trim();
-                }
-                return fallback;
-            };
-            const title  = getMeta([/<dc:title[^>]*>([^<]+)<\/dc:title>/i], filename.replace(/\.epub(\.zip)?$/i, ''));
-            const author = getMeta([/<dc:creator[^>]*>([^<]+)<\/dc:creator>/i], 'Unknown Author');
+    // If OPF not found, look for nested .epub inside (double-zipped case)
+    if(!opfPath){
+        const nested = Object.keys(zip.files).find(p=>p.toLowerCase().endsWith('.epub'));
+        if(nested){
+            showStatus('Detected nested .epub – extracting…');
+            const nestedBuffer = await zip.file(nested).async('arraybuffer');
+            return parseEPUB(nestedBuffer, nested); // recurse once
+        }
+        // fallback: search for first .opf anywhere
+        opfPath = Object.keys(zip.files).find(p => p.toLowerCase().endsWith('.opf'));
+    }
+    if(!opfPath) throw new Error('content.opf not found – not a valid EPUB');
 
-            // manifest id → href
-            const manifest = {};
-            [...opfContent.matchAll(/<item[^>]+>/g)].forEach(item => {
-                const id   = (item[0].match(/id="([^"]+)"/)   || [])[1];
-                const href = (item[0].match(/href="([^"]+)"/) || [])[1];
-                if (id && href) manifest[id] = href;
-            });
+    const opfContent = await zip.file(opfPath).async('string');
+    const opfDir     = opfPath.substring(0, opfPath.lastIndexOf('/')+1);
 
-            // spine order
-            const spine = (opfContent.match(/<spine[\s\
+    const meta = (pats, dflt='') => {
+        for(const p of pats){ const m = opfContent.match(p); if(m) return m[1].trim(); }
+        return dflt;
+    };
+    const title  = meta([/<dc:title[^>]*>([^<]+)<\/dc:title>/i], filename.replace(/\.epub(\.zip)?$/i,''));
+    const author = meta([/<dc:creator[^>]*>([^<]+)<\/dc:creator>/i], 'Unknown Author');
+
+    // manifest id→href
+    const manifest = {};
+    [...opfContent.matchAll(/<item[^>]+>/g)].forEach(it=>{
+        const id=(it[0].match(/id="([^"]+)"/)||[])[1];
+        const hr=(it[0].match(/href="([^"]+)"/)||[])[1];
+        if(id&&hr) manifest[id]=hr;
+    });
+
+    // spine order
+    const spineSect = (opfContent.match(/<spine[\s\S]*?<\/spine>/i)||[''])[0];
+    const order = [...spineSect.matchAll(/<itemref[^>]+idref="([^"]+)"/g)].map(m=>m[1]);
+
+    const chapters=[];
+    for(const id of order){
+        const href = manifest[id]; if(!href) continue;
+        try{
+            const html = await zip.file(opfDir+href).async('string');
+            const {title:ct,text}=extractTextFromHTML(html);
+            if(text.trim()) chapters.push({title: ct||`Chapter ${chapters.length+1}`, content:text});
+        }catch{}
+    }
+    if(!chapters.length) throw new Error('Chapters not found / unreadable');
+    return {title, author, chapters};
+}
+
+function extractTextFromHTML(html){
+    html = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi,'').replace(/<style[^>]*>[\s\S]*?<\/style>/gi,'');
+    const tMatch = html.match(/<title>([^<]+)<\/title>/i) || html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
+    const title = tMatch? tMatch[1].trim() : '';
+    const tmp = document.createElement('div'); tmp.innerHTML = html;
+    tmp.querySelectorAll('script,style,nav,header,footer').forEach(el=>el.remove());
+    tmp.querySelectorAll('br').forEach(br=>br.replaceWith('\n'));
+    tmp.querySelectorAll('p').forEach(p=>p.append('\n\n'));
+    let text = tmp.textContent||'';
+    text = text.replace(/\r\n/g,'\n').replace(/\n{3,}/g,'\n\n').replace(/\t/g,' ').replace(/ {2,}/g,' ').trim();
+    return {title,text};
+}
+
+/* ————— Display ————— */
+function displayResult(data){
+    chaptersDiv.innerHTML='';
+    data.chapters.forEach((c,i)=>{
+        const d=document.createElement('div'); d.className='chapter-item'; d.textContent=`${i+1}. ${c.title}`; chaptersDiv.appendChild(d);
+    });
+    chapterList.style.display='block';
+    output.textContent = JSON.stringify(data,null,2); output.style.display='block';
+    downloadBtn.style.display = copyBtn.style.display = resetBtn.style.display = 'inline-block';
+}
+
+/* ————— Actions ————— */
+downloadBtn.addEventListener('click',()=>{
+    if(!convertedData) return;
+    const blob = new Blob([JSON.stringify(convertedData,null,2)],{type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url;
+    a.download = `${bookTitle.replace(/[^a-z0-9]/gi,'-').toLowerCase()}.json`;
+    a.click(); URL.revokeObjectURL(url);
+});
+
+copyBtn.addEventListener('click',()=>{
+    if(!convertedData) return;
+    navigator.clipboard.writeText(JSON.stringify(convertedData,null,2)).then(()=>{
+        const old=copyBtn.textContent; copyBtn.textContent='✅ Copied!'; setTimeout(()=>copyBtn.textContent=old,2000);
+    });
+});
+
+resetBtn.addEventListener('click',()=>{
+    fileInput.value=''; convertedData=null;
+    ['status','chapterList','output','downloadBtn','copyBtn','resetBtn'].forEach(id=>{
+        const el=document.getElementById(id);
+        if(el) el.style.display = (id==='status'? 'none':'none');
+    });
+});
+</script>
+</body>
+</html>
