@@ -54,6 +54,8 @@
             background-color: #f5f5f7;
             border-radius: 5px;
             white-space: pre-wrap;  /* Changed from pre to pre-wrap for better display */
+            word-wrap: break-word;  /* Ensure long words wrap */
+            word-break: normal;     /* Don't break words mid-word */
             overflow-x: auto;
             max-height: 400px;
             overflow-y: auto;
@@ -293,23 +295,73 @@ function extractTextFromHTML(html){
     tmp.innerHTML = html;
     
     // Remove unwanted elements
-    tmp.querySelectorAll('script,style,nav,header,footer').forEach(el => el.remove());
+    tmp.querySelectorAll('script,style,nav,header,footer,aside').forEach(el => el.remove());
     
-    // Handle line breaks and paragraphs
-    tmp.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
-    tmp.querySelectorAll('p').forEach(p => {
-        p.insertAdjacentText('afterend', '\n\n');
+    // Process block elements to preserve paragraph structure
+    const blockElements = 'p,div,h1,h2,h3,h4,h5,h6,blockquote,pre,section,article,li';
+    tmp.querySelectorAll(blockElements).forEach(el => {
+        // Add space before the element if there's text immediately before it
+        if (el.previousSibling && el.previousSibling.nodeType === 3) {
+            el.previousSibling.textContent = el.previousSibling.textContent.trimEnd() + ' ';
+        }
+        // Add space after the element to separate from next content
+        if (el.nextSibling && el.nextSibling.nodeType === 3) {
+            el.nextSibling.textContent = ' ' + el.nextSibling.textContent.trimStart();
+        }
     });
     
-    // Extract text
+    // Handle line breaks - convert to spaces to maintain flow
+    tmp.querySelectorAll('br').forEach(br => br.replaceWith(' '));
+    
+    // Extract text content
     let text = tmp.textContent || '';
     
-    // Clean up whitespace
-    text = text.replace(/\r\n/g,'\n')
-               .replace(/\n{3,}/g,'\n\n')
-               .replace(/\t/g,' ')
-               .replace(/ {2,}/g,' ')
-               .trim();
+    // Clean up whitespace while preserving sentence flow
+    text = text
+        // Normalize line endings
+        .replace(/\r\n/g, ' ')
+        .replace(/\n/g, ' ')
+        // Remove tabs
+        .replace(/\t/g, ' ')
+        // Collapse multiple spaces into one
+        .replace(/ {2,}/g, ' ')
+        // Fix spacing around punctuation
+        .replace(/\s+([.,!?;:])/g, '$1')
+        .replace(/([.,!?;:])\s+/g, '$1 ')
+        // Remove spaces at start/end of quotes
+        .replace(/"\s+/g, '"')
+        .replace(/\s+"/g, '"')
+        .replace(/'\s+/g, "'")
+        .replace(/\s+'/g, "'")
+        // Ensure proper spacing after sentences
+        .replace(/([.!?])([A-Z])/g, '$1 $2')
+        // Final trim
+        .trim();
+    
+    // Split into paragraphs based on double punctuation or clear breaks
+    const sentences = text.split(/(?<=[.!?])\s+/);
+    const paragraphs = [];
+    let currentParagraph = [];
+    
+    sentences.forEach((sentence, i) => {
+        currentParagraph.push(sentence);
+        
+        // Create new paragraph after ~3-5 sentences or at natural breaks
+        if (currentParagraph.length >= 4 || 
+            (currentParagraph.length >= 3 && sentence.match(/[.!?]$/)) ||
+            (i < sentences.length - 1 && sentences[i + 1].match(/^(Chapter|CHAPTER|Part|PART|Section|SECTION)/))) {
+            paragraphs.push(currentParagraph.join(' ').trim());
+            currentParagraph = [];
+        }
+    });
+    
+    // Don't forget the last paragraph
+    if (currentParagraph.length > 0) {
+        paragraphs.push(currentParagraph.join(' ').trim());
+    }
+    
+    // Join paragraphs with double newlines for readability
+    text = paragraphs.join('\n\n');
     
     return {title, text};
 }
